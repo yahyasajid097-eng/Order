@@ -323,7 +323,11 @@ input:focus,textarea:focus{outline:2px solid var(--accent);outline-offset:0}
     base.notes=$('#fNotes').value.trim();
     base.available=$('#fAvail').checked;
     base.delivered=$('#fDelivered').checked;
-    var imgStep=pendingFile?backend.image(pendingFile):Promise.resolve(null);
+    var imgFailed=false;
+    var imgStep=pendingFile?backend.image(pendingFile).catch(function(e){
+      /* فشل رفع الصورة لا يمنع حفظ الطلب */
+      imgFailed=true;console.error('image error',e);return null;
+    }):Promise.resolve(null);
     imgStep.then(function(img){
       var oldId=editing&&editing.imageId;
       if(img){
@@ -332,14 +336,18 @@ input:focus,textarea:focus{outline:2px solid var(--accent);outline-offset:0}
       }
       return backend.save(base).then(function(){
         if(img&&oldId&&oldId!==img.imageId&&backend.mode==='db'){/* old image left in storage; harmless */}
-        closeForm();toast('تم الحفظ');
+        closeForm();toast(imgFailed?'تم حفظ الطلب لكن تعذّر رفع الصورة':'تم الحفظ');
       });
     }).catch(function(e){
       btn.disabled=false;btn.textContent='حفظ';
-      var code=e&&e.code;
-      if(code==='too_large'||code==='quota_or_state'||code==='quota_exceeded')toast('تعذّر الحفظ: المساحة ممتلئة');
-      else if(code==='invalid_argument')toast('ليس لديك صلاحية التعديل');
-      else toast('تعذّر الحفظ، حاولي مرة أخرى');
+      var code=(e&&e.code)||'', msg;
+      console.error('save error',e);
+      if(code==='too_large'||code==='quota_or_state'||code==='quota_exceeded')msg='تعذّر الحفظ: المساحة ممتلئة';
+      else if(code==='invalid_argument')msg='تعذّر الحفظ: ليس لديك صلاحية الإضافة. افتحي الصفحة من حساب المالك';
+      else if(code==='not_granted'||code==='capability_disabled'||code==='revoked')msg='تعذّر الحفظ: التخزين غير مفعّل لهذه الصفحة';
+      else if(code==='unavailable'||code==='resource_exhausted')msg='تعذّر الحفظ مؤقتًا، انتظري قليلًا وأعيدي المحاولة';
+      else msg='تعذّر الحفظ، حاولي مرة أخرى';
+      toast(code?msg+' ('+code+')':msg);
     });
   }
 
