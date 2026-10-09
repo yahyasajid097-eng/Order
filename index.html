@@ -42,10 +42,14 @@ h1 small{display:block;font-size:13px;color:var(--muted);font-weight:400}
 .btn.ghost{background:var(--accent-soft);color:var(--accent)}
 .btn.danger{background:var(--bad-bg);color:var(--bad)}
 .btn:disabled{opacity:.5;cursor:default}
-.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:14px}
+.stats{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-bottom:10px}
 .stat{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:10px;text-align:center;box-shadow:var(--shadow)}
 .stat b{display:block;font-size:20px;color:var(--accent)}
 .stat span{font-size:12px;color:var(--muted)}
+.stat.good b{color:var(--ok)}
+.stat.wait b{color:var(--warn)}
+.alert{display:none;background:var(--bad-bg);color:var(--bad);border-radius:12px;padding:10px 12px;font-size:14px;font-weight:700;margin-bottom:14px}
+.card.owed{border-color:var(--bad)}
 .banner{background:var(--warn-bg);color:var(--warn);border-radius:12px;padding:10px 12px;font-size:14px;margin-bottom:12px}
 .tools{display:flex;flex-direction:column;gap:8px;margin-bottom:12px}
 input[type=text],input[type=number],input[type=search],textarea{width:100%;font:inherit;color:var(--text);background:var(--card);border:1px solid var(--line);border-radius:12px;padding:10px 12px}
@@ -101,8 +105,10 @@ input:focus,textarea:focus{outline:2px solid var(--accent);outline-offset:0}
   <div class="stats">
     <div class="stat"><b id="sTotal">0</b><span>كل الطلبات</span></div>
     <div class="stat"><b id="sPending">0</b><span>بانتظار التوصيل</span></div>
-    <div class="stat"><b id="sMoney">0</b><span>مبالغ لم تُسلَّم</span></div>
+    <div class="stat good"><b id="sReceived">0</b><span>💰 مبالغ مستلمة</span></div>
+    <div class="stat wait"><b id="sUnreceived">0</b><span>⏳ مبالغ غير مستلمة</span></div>
   </div>
+  <div class="alert" id="owedAlert"></div>
 
   <div class="tools">
     <input type="search" id="search" placeholder="بحث بالاسم أو العميل أو الملاحظات…">
@@ -111,6 +117,9 @@ input:focus,textarea:focus{outline:2px solid var(--accent);outline-offset:0}
       <button class="chip" data-f="pending">لم يُوصَّل</button>
       <button class="chip" data-f="delivered">تم التوصيل</button>
       <button class="chip" data-f="unavailable">غير متوفر</button>
+      <button class="chip" data-f="unpaid">لم تدفع</button>
+      <button class="chip" data-f="paid">دفعت</button>
+      <button class="chip" data-f="owed">سُلِّم ولم يُدفع</button>
     </div>
   </div>
 
@@ -148,6 +157,7 @@ input:focus,textarea:focus{outline:2px solid var(--accent);outline-offset:0}
     <div class="checks">
       <label><input type="checkbox" id="fAvail" checked> متوفر</label>
       <label><input type="checkbox" id="fDelivered"> تم التوصيل</label>
+      <label><input type="checkbox" id="fPaid"> تم الدفع</label>
     </div>
     <div class="actions">
       <button class="btn" id="saveBtn">حفظ</button>
@@ -254,6 +264,9 @@ input:focus,textarea:focus{outline:2px solid var(--accent);outline-offset:0}
       if(filter==='pending'&&(o.delivered||o.available===false))return false;
       if(filter==='delivered'&&!o.delivered)return false;
       if(filter==='unavailable'&&o.available!==false)return false;
+      if(filter==='unpaid'&&(o.paid||o.available===false))return false;
+      if(filter==='paid'&&!o.paid)return false;
+      if(filter==='owed'&&!(o.delivered&&!o.paid&&o.available!==false))return false;
       if(q){
         var hay=((o.name||'')+' '+(o.customer||'')+' '+(o.notes||'')).toLowerCase();
         if(hay.indexOf(q)<0)return false;
@@ -265,16 +278,21 @@ input:focus,textarea:focus{outline:2px solid var(--accent);outline-offset:0}
     var pending=orders.filter(function(o){return !o.delivered&&o.available!==false});
     $('#sTotal').textContent=orders.length;
     $('#sPending').textContent=pending.length;
-    $('#sMoney').textContent=fmt(pending.reduce(function(s,o){return s+num(o.price)+num(o.delivery)},0));
+    var live=orders.filter(function(o){return o.available!==false});
+    $('#sReceived').textContent=fmt(live.filter(function(o){return o.paid}).reduce(function(s,o){return s+num(o.price)},0));
+    $('#sUnreceived').textContent=fmt(live.filter(function(o){return !o.paid}).reduce(function(s,o){return s+num(o.price)},0));
+    var owed=live.filter(function(o){return o.delivered&&!o.paid}), al=$('#owedAlert');
+    if(owed.length){al.style.display='block';al.textContent='⚠️ سُلِّم ولم يُدفع: '+owed.length+' طلب بمبلغ '+fmt(owed.reduce(function(s,o){return s+num(o.price)},0))}
+    else al.style.display='none';
     var items=visible(), box=$('#list');
     if(!items.length){
       box.innerHTML='<div class="empty">'+(orders.length?'لا توجد نتائج مطابقة':'لا توجد طلبات بعد. اضغطي «إضافة» لتسجيل أول طلب 🌙')+'</div>';
       return;
     }
     box.innerHTML=items.map(function(o){
-      var src=imgSrc(o), avail=o.available!==false, del=!!o.delivered, total=num(o.price)+num(o.delivery);
+      var src=imgSrc(o), avail=o.available!==false, del=!!o.delivered, paid=!!o.paid, isOwed=avail&&del&&!paid, total=num(o.price)+num(o.delivery);
       var thumb=src?'<img class="thumb" data-act="zoom" data-id="'+esc(o.id)+'" src="'+esc(src)+'" alt="">':'<div class="thumb" style="cursor:default">👜</div>';
-      return '<div class="card'+(avail?'':' na')+'">'+thumb+
+      return '<div class="card'+(avail?'':' na')+(isOwed?' owed':'')+'">'+thumb+
         '<div class="info">'+
           '<div class="title">'+esc(o.name||'منتج بدون اسم')+'</div>'+
           (o.customer?'<div class="sub">العميلة: '+esc(o.customer)+'</div>':'')+
@@ -283,6 +301,7 @@ input:focus,textarea:focus{outline:2px solid var(--accent);outline-offset:0}
           '<div class="pills">'+
             '<button class="pill '+(avail?'ok':'bad')+'" data-act="avail" data-id="'+esc(o.id)+'">'+(avail?'✅ متوفر':'⛔ غير متوفر')+'</button>'+
             '<button class="pill '+(del?'ok':'warn')+'" data-act="deliv" data-id="'+esc(o.id)+'">'+(del?'🚚 تم التوصيل':'⏳ لم يُوصَّل')+'</button>'+
+            '<button class="pill '+(paid?'ok':(isOwed?'bad':'warn'))+'" data-act="paid" data-id="'+esc(o.id)+'">'+(paid?'💰 تم الدفع':(isOwed?'⚠️ سُلِّم ولم يُدفع':'⏳ لم تدفع'))+'</button>'+
             '<button class="pill edit" data-act="edit" data-id="'+esc(o.id)+'">تعديل</button>'+
             '<button class="pill bad" data-act="del" data-id="'+esc(o.id)+'">حذف</button>'+
           '</div>'+
@@ -306,6 +325,7 @@ input:focus,textarea:focus{outline:2px solid var(--accent);outline-offset:0}
     $('#fNotes').value=o&&o.notes||'';
     $('#fAvail').checked=o?o.available!==false:true;
     $('#fDelivered').checked=o?!!o.delivered:false;
+    $('#fPaid').checked=o?!!o.paid:false;
     $('#file').value='';
     setPreview(o?imgSrc(o):'');
     $('#saveBtn').disabled=false;$('#saveBtn').textContent='حفظ';
@@ -323,6 +343,7 @@ input:focus,textarea:focus{outline:2px solid var(--accent);outline-offset:0}
     base.notes=$('#fNotes').value.trim();
     base.available=$('#fAvail').checked;
     base.delivered=$('#fDelivered').checked;
+    base.paid=$('#fPaid').checked;
     var imgFailed=false;
     var imgStep=pendingFile?backend.image(pendingFile).catch(function(e){
       /* فشل رفع الصورة لا يمنع حفظ الطلب */
@@ -360,6 +381,7 @@ input:focus,textarea:focus{outline:2px solid var(--accent);outline-offset:0}
     function fail(){toast('تعذّر التحديث')}
     if(act==='avail')backend.patch(o.id,{available:o.available===false}).catch(fail);
     else if(act==='deliv')backend.patch(o.id,{delivered:!o.delivered}).catch(fail);
+    else if(act==='paid')backend.patch(o.id,{paid:!o.paid}).catch(fail);
     else if(act==='edit')openForm(o);
     else if(act==='zoom'){$('#lbImg').src=imgSrc(o);$('#lightbox').classList.add('open')}
     else if(act==='del'){
